@@ -1,0 +1,3 @@
+# Keep line endings stable across platforms: LF in the repository and in the
+# working tree, so a Windows checkout does not show spurious diffs.
+* text=auto eol=lf

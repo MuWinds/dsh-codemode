@@ -1,0 +1,23 @@
+# Verification overlay: run a `codemode` session with one fake MCP server.
+#
+#   dsh --profile codemode-verify --patch fixtures/verify-codemode.patch.yml --no-open --port 3099
+#
+# It does two things: makes codemode the default preset for new sessions, and
+# mounts the fixture MCP server at the HOST level — the hardest case for
+# masking, because a host-plane MCP row injects its tools into every session.
+- id: agent-preset-registry
+  name: '@deepseek-ai/dsh-agent-preset-registry'
+  config:
+    default: codemode
+
+- insert:
+    - id: mcp-fake
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: fake
+        transport: stdio
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - 'C:\Users\MuWinds\Documents\Coding Project\github\dsh-codemode\fixtures\fake-mcp-server.mjs'
+        toolCallTimeoutMs: 20000
+        failOnStartupError: false

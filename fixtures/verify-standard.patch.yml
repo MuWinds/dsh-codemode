@@ -1,0 +1,18 @@
+# Verification overlay: the standard-preset control run (regression check).
+#
+#   dsh --profile codemode-verify --patch fixtures/verify-standard.patch.yml --no-open --port 3099
+#
+# Same fake MCP server, but the default preset stays `standard`, so the three
+# `mcp__fake__*` tools must remain in the model's tool list and the codemode
+# masking line must NOT appear.
+- insert:
+    - id: mcp-fake
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: fake
+        transport: stdio
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - 'C:\Users\MuWinds\Documents\Coding Project\github\dsh-codemode\fixtures\fake-mcp-server.mjs'
+        toolCallTimeoutMs: 20000
+        failOnStartupError: false

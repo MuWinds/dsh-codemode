@@ -1,0 +1,24 @@
+# Verification overlay: exercise the masking logic in a REAL dsh process on a
+# profile whose app has no agent presets (the shipped `headless` template).
+#
+#   dsh --profile codemode-verify-hl --patch fixtures/verify-host-mask.patch.yml "list your tool names"
+#
+# The plugin is mounted at the HOST level here instead of inside the preset, so
+# `apply()` runs, the discovery tools register, and the assemble hook fires for
+# the headless session. The three `mcp__fake__*` tools must disappear from the
+# model's tool list even though the MCP server publishes them to every session.
+# Preset wiring is verified separately (web profile, `--dump-config` and the
+# plugin's own startup log); this overlay isolates the masking mechanism.
+- insert:
+    - id: codemode-host
+      name: 'dsh-codemode'
+    - id: mcp-fake
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: fake
+        transport: stdio
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - 'C:\Users\MuWinds\Documents\Coding Project\github\dsh-codemode\fixtures\fake-mcp-server.mjs'
+        toolCallTimeoutMs: 20000
+        failOnStartupError: false

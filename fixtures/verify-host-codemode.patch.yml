@@ -1,0 +1,32 @@
+# Verification overlay: run the FULL Code Mode behaviour in a real dsh process on
+# a profile whose app has no agent presets (the shipped `headless` template).
+#
+#   dsh --profile codemode-verify-hl --patch fixtures/verify-host-codemode.patch.yml "…"
+#
+# Three things differ from verify-host-mask.patch.yml:
+#   - `tools` is switched to `mode: both` at the host level, so the session gets
+#     the reserved `run_code` transport next to the native tools (exactly the
+#     presentation the codemode preset selects through
+#     @deepseek-ai/dsh-agent-tool-presentation);
+#   - the plugin is mounted at the host level, so it registers the discovery
+#     tools and the guard for this session;
+#   - the fixture MCP server publishes `mcp__fake__*` to every session, which the
+#     plugin must strip from the request while keeping it callable from run_code.
+- insert:
+    - id: codemode-host
+      name: 'dsh-codemode'
+    - id: mcp-fake
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: fake
+        transport: stdio
+        command: 'C:\Program Files\nodejs\node.exe'
+        args:
+          - 'C:\Users\MuWinds\Documents\Coding Project\github\dsh-codemode\fixtures\fake-mcp-server.mjs'
+        toolCallTimeoutMs: 20000
+        failOnStartupError: false
+
+- id: tools
+  name: '@deepseek-ai/dsh-tools'
+  config:
+    mode: both

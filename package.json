@@ -1,0 +1,33 @@
+{
+  "name": "dsh-codemode",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Code Mode preset for DeepSeek Harness: standard tools plus run_code, with MCP tools kept out of context and discovered/called from inside run_code.",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "tools",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "gen": "node tools/gen-preset.mjs"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
