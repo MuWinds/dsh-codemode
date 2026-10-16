@@ -38,11 +38,20 @@ const EXTRA_ROWS = [
   '              # Tool-name prefixes kept out of the request surface.',
   '              hiddenPrefixes:',
   "                - 'mcp__'",
+  "              # Mask every tool the registry does not resolve from this",
+  "              # preset's own scope: MCP servers, profile-level plugin",
+  '              # bundles, and per-agent tool sets. What stays in the request',
+  '              # is the standard composition plus the built-in run_code.',
+  '              nativeScope: true',
+  '              # Explicit exceptions, by exact tool name:',
+  "              #   nativeTools: ['load_workspace_dependencies']",
+  "              #   hiddenTools: ['subagent_codex']",
   '              # Discovery tools, callable only from inside run_code.',
   '              metaTools:',
   '                - code_tools_list',
   '                - code_tools_search',
   '                - code_tools_describe',
+  '                - code_debug',
 ];
 
 /** Slice one top-level row's `plugins:` block, dedented to its own minimum indent. */
