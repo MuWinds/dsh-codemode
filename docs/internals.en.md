@@ -137,6 +137,22 @@ test:
 
 Re-run it after touching `lib/scope.js` or `lib/rules.js`, and after a DSH upgrade.
 
+**Verifying the kernel layer on 0.2.1-alpha.5.** The desktop feed is still pinned to
+0.2.0-rc.2 (`https://download.deepseek.com/dsh-desk/feeds/win-x64/nightly.yml` lists
+only rc.2 assets), so alpha.5 comes from npm core packages instead:
+
+```powershell
+npm install @deepseek-ai/dsh-tools@0.2.1-alpha.5 @deepseek-ai/dsh-system-prompt@0.2.1-alpha.5 @deepseek-ai/dsh-scope@0.2.1-alpha.5
+# npm resolves the cordis peer (alpha.5's dsh-tools wants ~4.0.5-alpha.2; 4.0.5 is installed)
+```
+
+Then copy `tools/verify-assembly.mjs` next to `node_modules/@deepseek-ai/dsh-tools/`
+and run it. Measured 2026-10: all seven checks pass, and `ctx.tools.get(name, scope)`,
+the assembly's `context.scope`, and `dsh-scope`'s `Symbol("dsh.scope")` are unchanged.
+`run_code` is still reserved (registration throws), while **`mode` now accepts only
+`native`/`ptc`** — exactly why the 0.2.x line carries its own `code_run` transport,
+while the `0.1.x` line's rc.2 still accepts `both`.
+
 ## Baseline and upgrades
 
 `cordis.patch.yml` embeds a **snapshot of the `preset-standard` plugin list shipped

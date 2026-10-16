@@ -26,6 +26,17 @@ profile 级插件、按 agent 注册的工具集）被挡在**模型上下文之
   `nativeTools`）仍然生效，可用来加例外。
 - 其他模式（`standard`、`ptc`、`minimal`、`cordis`）不受影响：那些模式下所有工具仍以原生方式呈现。
 
+## 版本线
+
+| 插件线 | 目标 DSH | 程序入口 |
+|---|---|---|
+| `0.2.x`（`main`） | 0.2.1-alpha.5 及以后（该版起 `mode: both` 被 `dsh-tools` 的 schema 移除） | 本包自带的 `code_run` 传输，预设行 `mode: native` |
+| `0.1.x`（分支 `0.1.x`） | 0.2.0-rc.2（仍有 `mode: both`） | 内置 `run_code`（由 `both` 附带），本包不注册传输 |
+
+两条线行为一致：标准工具原生，预设自身清单以外的一切（MCP、profile 级插件、按 `agent.ctx`
+注册的工具集）都只能从程序内部调用。`0.2.1` 已在真正的 0.2.1-alpha.5 内核上验证，口径与命令见
+[docs/internals.md](./docs/internals.md#验证)。
+
 ## 安装
 ![alt text](image.png)
 

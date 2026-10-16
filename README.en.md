@@ -34,6 +34,18 @@ Pick the `codemode` mode for a session and:
 Every other mode (`standard`, `ptc`, `minimal`, `cordis`) is untouched: tools keep
 their native presentation there.
 
+## Version lines
+
+| Plugin line | Target DSH | Program entry |
+|---|---|---|
+| `0.2.x` (`main`) | 0.2.1-alpha.5 and later, where `dsh-tools` no longer accepts `mode: both` | this package's own `code_run` transport, preset row `mode: native` |
+| `0.1.x` (branch `0.1.x`) | 0.2.0-rc.2, which still has `mode: both` | the built-in `run_code` that `both` adds; this package registers no transport |
+
+Both lines behave the same way: standard tools stay native, and everything outside
+the preset's own list (MCP, profile-level plugins, per-agent tool sets) is reached
+only from inside a program. `0.2.1` is verified against a real 0.2.1-alpha.5 core;
+the recipe is in [docs/internals.en.md](./docs/internals.en.md#verification).
+
 ## Install
 
 ![alt text](image.png)

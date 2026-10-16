@@ -109,6 +109,21 @@ dsh --profile codemode-verify-hl --patch fixtures/verify-host-codemode.patch.yml
 
 改动 `lib/scope.js`、`lib/rules.js` 或 DSH 升级后应重跑。
 
+**在 0.2.1-alpha.5 上验证内核层。** 桌面更新源当前仍钉在 0.2.0-rc.2
+（`https://download.deepseek.com/dsh-desk/feeds/win-x64/nightly.yml` 只有 rc.2 资产），所以
+alpha.5 走 npm 核心包：在独立目录装
+
+```powershell
+npm install @deepseek-ai/dsh-tools@0.2.1-alpha.5 @deepseek-ai/dsh-system-prompt@0.2.1-alpha.5 @deepseek-ai/dsh-scope@0.2.1-alpha.5
+# peer cordis 由 npm 解析（alpha.5 的 dsh-tools 要求 ~4.0.5-alpha.2，装出来是 4.0.5）
+```
+
+再把 `tools/verify-assembly.mjs` 复制到 `node_modules/@deepseek-ai/dsh-tools/` 旁运行。2026-10 实测：
+7 项检查全 PASS，`ctx.tools.get(name, scope)`、`assemble` 的 `context.scope`、`dsh-scope` 的
+`Symbol("dsh.scope")` 语义未变；`run_code` 仍被保留（注册抛错）；**`mode` 的 schema 已只剩
+`native`/`ptc`**——这正是 0.2.x 线自带 `code_run` 传输的原因，而 0.1.x 线对应的 rc.2 仍接受
+`both`。
+
 ## 基线与升级
 
 `cordis.patch.yml` 内嵌了**随 DSH 发布的 `preset-standard` 插件列表快照**（注册表会整体
