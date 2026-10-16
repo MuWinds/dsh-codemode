@@ -1,8 +1,7 @@
 {
   "name": "dsh-codemode",
   "version": "0.1.1",
-  "private": true,
-  "description": "Code Mode preset for DeepSeek Harness: tools the preset's own composition does not register (MCP servers, profile-level plugins, per-agent tool sets) are kept out of context, and the harness's built-in run_code discovers and calls them.",
+  "description": "Code Mode preset for DeepSeek Harness: tools the preset's own composition does not register (MCP servers, profile-level plugins, per-agent tool sets) are kept out of context and discovered/called from inside the harness's built-in run_code.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -26,8 +25,28 @@
       "patch": "./cordis.patch.yml"
     }
   },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "codemode",
+    "code-mode",
+    "mcp",
+    "agent-preset",
+    "plugin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MuWinds/dsh-codemode.git"
+  },
+  "homepage": "https://github.com/MuWinds/dsh-codemode#readme",
+  "bugs": {
+    "url": "https://github.com/MuWinds/dsh-codemode/issues"
+  },
   "engines": {
     "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }
