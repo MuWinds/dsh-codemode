@@ -28,7 +28,10 @@ const definitions = new Map([
 
 const ctx = {
   tools: {
-    view: () => ({ visible: definitions, knownNames: new Set(definitions.keys()), restrictableNames: new Set(definitions.keys()) }),
+    // `schemas()` is the public projection; `get()` recovers the full definition
+    // (and its output schema). Both are public in dsh-tools, unlike `view()`.
+    schemas: () => [...definitions.values()],
+    get: (name) => definitions.get(name),
   },
 };
 
@@ -58,7 +61,7 @@ test('list returns every callable tool including the hidden ones, never run_code
   ]);
   assert.equal(value.total, 3);
   assert.equal(value.hidden, 2);
-  assert.deepEqual(value.namespaces, [{ namespace: 'okx', count: 2 }]);
+  assert.deepEqual(value.namespaces, [{ namespace: 'okx', count: 2, kind: 'mcp' }]);
   const ticker = value.tools.find((row) => row.name === 'mcp__okx__market_get_ticker');
   assert.equal(ticker.hidden, true);
   assert.equal(ticker.namespace, 'okx');
@@ -108,10 +111,46 @@ test('every discovery tool declares itself concurrency-safe', () => {
 test('code_debug reports the hidden namespaces and the masking history', async () => {
   const { code_debug: debug } = tools();
   const value = await debug.execute({}, exec);
-  assert.deepEqual(value.hidden.namespaces, [{ namespace: 'okx', count: 2 }]);
+  assert.deepEqual(value.hidden.namespaces, [{ namespace: 'okx', count: 2, kind: 'mcp' }]);
   assert.equal(value.assemblies, 1);
   assert.deepEqual(value.recent, debugState.entries);
   assert.deepEqual(value.discoveryTools, options.metaTools);
+  assert.equal(value.nativeScope, true);
+  assert.deepEqual(value.nativeTools, []);
+  assert.deepEqual(value.hiddenTools, []);
+});
+
+test('a scope key makes the listing flag out-of-preset tools, like the request masking does', async () => {
+  const scopeKey = {};
+  const spawn = { name: 'spawn_teammate', description: 'Create a teammate', parameters: {} };
+  const agentNames = [...definitions.keys(), 'spawn_teammate'];
+  const scoped = {
+    tools: {
+      schemas: () => [...definitions.values(), spawn],
+      // Global view: the MCP server plus the deployment-level Team tool.
+      // Preset view: everything the preset itself registered.
+      // Agent view: the calling session's full chain, per-agent tools included.
+      get: (name, scope) => {
+        if (scope === undefined) return ['mcp__okx__market_get_ticker', 'mcp__okx__place_order'].includes(name) ? definitions.get(name) : undefined;
+        if (scope === scopeKey) return name === 'spawn_teammate' ? undefined : definitions.get(name);
+        if (scope !== undefined) return agentNames.includes(name) ? (definitions.get(name) ?? spawn) : undefined;
+        return undefined;
+      },
+    },
+  };
+  const list = createDiscoveryTools(scoped, options, 'run_code', { scopeKey })
+    .find((tool) => tool.name === options.metaTools[0]);
+  const value = await list.execute({}, exec);
+
+  const teammate = value.tools.find((row) => row.name === 'spawn_teammate');
+  assert.equal(teammate.hidden, true);
+  assert.equal(teammate.namespace, 'plugin');
+  assert.deepEqual(value.namespaces, [
+    { namespace: 'okx', count: 2, kind: 'mcp' },
+    { namespace: 'plugin', count: 1, kind: 'plugin' },
+  ]);
+  // A preset-owned tool stays native.
+  assert.equal(value.tools.find((row) => row.name === 'pwsh').hidden, false);
 });
 
 test('the debug tool is skipped without a state provider, and when debug is off', () => {
@@ -121,9 +160,22 @@ test('the debug tool is skipped without a state provider, and when debug is off'
   assert.equal(off.length, 3);
 });
 
-test('an unavailable registry view degrades to an empty listing instead of throwing', async () => {
+test('an unavailable registry surface degrades to an empty listing instead of throwing', async () => {
   const bare = createDiscoveryTools({ tools: {} }, options, 'run_code');
   const value = await bare[0].execute({}, exec);
   assert.deepEqual(value.tools, []);
   assert.equal(value.total, 0);
+});
+
+test('a projection without a resolvable definition still lists the tool', async () => {
+  const projectionOnly = {
+    tools: {
+      schemas: () => [{ name: 'pwsh', description: 'Run commands', parameters: { type: 'object' } }],
+      // No `get`: the definition (and its output schema) is unavailable.
+    },
+  };
+  const [list] = createDiscoveryTools(projectionOnly, options, 'run_code');
+  const value = await list.execute({}, exec);
+  assert.equal(value.total, 1);
+  assert.equal(value.tools[0].name, 'pwsh');
 });

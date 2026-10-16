@@ -4,3 +4,9 @@ node_modules/
 Thumbs.db
 .idea/
 .vscode/
+
+# Release tarballs built locally (`npm pack` output).
+.pack/
+
+# Never commit the npm publish token. Keep the file local for `npm publish`.
+.npmrc

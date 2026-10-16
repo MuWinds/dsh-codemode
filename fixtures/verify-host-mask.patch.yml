@@ -5,10 +5,13 @@
 #
 # The plugin is mounted at the HOST level here instead of inside the preset, so
 # `apply()` runs, the discovery tools register, and the assemble hook fires for
-# the headless session. The three `mcp__fake__*` tools must disappear from the
-# model's tool list even though the MCP server publishes them to every session.
-# Preset wiring is verified separately (web profile, `--dump-config` and the
-# plugin's own startup log); this overlay isolates the masking mechanism.
+# the headless session. A host-level mount carries no preset scope tag, so the
+# scope rule (`nativeScope`) is inert and this overlay exercises the name rules
+# alone: the three `mcp__fake__*` tools must disappear from the model's tool list
+# even though the MCP server publishes them to every session. Preset wiring — and
+# the scope rule itself — is verified separately (web profile, `--dump-config`,
+# the plugin's own startup log, and the offline assembly harness in
+# docs/internals.md).
 - insert:
     - id: codemode-host
       name: 'dsh-codemode'

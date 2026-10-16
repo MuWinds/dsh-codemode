@@ -4,14 +4,15 @@
 #   dsh --profile codemode-verify-hl --patch fixtures/verify-host-codemode.patch.yml "…"
 #
 # Three things differ from verify-host-mask.patch.yml:
-#   - `tools` is switched to `mode: both` at the host level, so the session gets
-#     the reserved `run_code` transport next to the native tools (exactly the
-#     presentation the codemode preset selects through
-#     @deepseek-ai/dsh-agent-tool-presentation);
+#   - `tools` is switched to `mode: native` at the host level, so the session
+#     keeps every native tool schema (the same presentation the codemode preset
+#     selects through @deepseek-ai/dsh-agent-tool-presentation). DSH 0.2.1
+#     removed `mode: both`, so the `run_code` transport that used to come with
+#     it is supplied by this package instead, as `code_run`;
 #   - the plugin is mounted at the host level, so it registers the discovery
-#     tools and the guard for this session;
+#     tools, the transport and the guard for this session;
 #   - the fixture MCP server publishes `mcp__fake__*` to every session, which the
-#     plugin must strip from the request while keeping it callable from run_code.
+#     plugin must strip from the request while keeping it callable from `code_run`.
 - insert:
     - id: codemode-host
       name: 'dsh-codemode'
@@ -29,4 +30,4 @@
 - id: tools
   name: '@deepseek-ai/dsh-tools'
   config:
-    mode: both
+    mode: native
