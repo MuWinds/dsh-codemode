@@ -171,3 +171,15 @@
                 - code_tools_search
                 - code_tools_describe
                 - code_debug
+              # Hybrid search: fuse a semantic embedding score into code_tools_search.
+              # Off by default - enabling makes network calls to the embedding
+              # endpoint on first search. When the provider is unreachable the
+              # search silently degrades to the lexical ranking above.
+              embed:
+                enabled: false
+                # Any OpenAI-compatible or Ollama embeddings server.
+                baseUrl: 'http://127.0.0.1:11434'
+                model: 'bge-m3'
+              # Fusion knobs (only read when embed.enabled):
+              # semanticWeight: 1            # fusion scale factor
+              # semanticRescueFloor: 0.35    # cosine below this is ignored
