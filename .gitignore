@@ -16,3 +16,5 @@ full-test.txt
 test-result.txt
 gitlog.txt
 patch-*.mjs
+
+lex-baseline.txt
