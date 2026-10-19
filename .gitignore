@@ -18,3 +18,7 @@ gitlog.txt
 patch-*.mjs
 
 lex-baseline.txt
+
+bench-hybrid.txt
+ollama-create.txt
+magic-check.txt
