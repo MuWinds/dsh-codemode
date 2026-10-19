@@ -61,6 +61,10 @@ dsh plugin --profile desktop add "link:<path-to-the-checkout>"
 | `searchLimit` | `8` | `code_tools_search` 默认返回的行数 |
 | `maxDescriptionChars` | `240` | 列表中描述文本的截断长度 |
 | `maxParallelSubCalls` | `10` | 一个程序内可并发的只读子调用上限 |
+| `embed` | `enabled: false` | 混合检索：给 `code_tools_search` 融合语义 embedding 分数。默认关闭；provider 不可达时静默退回纯词法排序（与关闭时逐字节一致） |
+| `embed.baseUrl` / `embed.model` | Ollama / `bge-m3` | 任意 OpenAI 兼容 `/v1/embeddings` 或 Ollama `/api/embed` 端点 |
+| `semanticWeight` | `1` | 语义分数融合权重（仅 `embed.enabled` 时读取） |
+| `semanticRescueFloor` | `0.35` | cosine 低于此值被忽略；纯语义命中只救回词法零召回的行，永不压过真实 token 匹配 |
 | `guard` | `true` | 拒绝模型对被遮蔽工具的直接调用 |
 | `sdkSection` | `true` | 注入 / 替换 Code Mode 说明段落 |
 | `debug` | `true` | 注册 `code_debug` 工具 |

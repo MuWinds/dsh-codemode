@@ -72,6 +72,10 @@ behaviour (omit a key, or set it to `null`, to take the default):
 | `searchLimit` | `8` | Default rows returned by `code_tools_search` |
 | `maxDescriptionChars` | `240` | Truncation length for descriptions in listings |
 | `maxParallelSubCalls` | `10` | Concurrent read-only sub-calls allowed inside one program |
+| `embed` | `enabled: false` | Hybrid search: fuse a semantic embedding score into `code_tools_search`. Off by default; an unreachable provider degrades silently to the lexical ranking, byte-for-byte identical to the disabled path |
+| `embed.baseUrl` / `embed.model` | Ollama / `bge-m3` | Any OpenAI-compatible `/v1/embeddings` or Ollama `/api/embed` endpoint |
+| `semanticWeight` | `1` | Fusion scale for the semantic score (read only when `embed.enabled`) |
+| `semanticRescueFloor` | `0.35` | Cosines below this are ignored; a purely semantic hit rescues lexical zero-recall rows and never outranks a real token match
 | `guard` | `true` | Reject model-direct calls to masked tools |
 | `sdkSection` | `true` | Inject / replace the Code Mode section |
 | `debug` | `true` | Register the `code_debug` tool |

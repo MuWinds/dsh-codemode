@@ -10,3 +10,15 @@ Thumbs.db
 
 # Never commit the npm publish token. Keep the file local for `npm publish`.
 .npmrc
+
+.models/
+full-test.txt
+test-result.txt
+gitlog.txt
+patch-*.mjs
+
+lex-baseline.txt
+
+bench-hybrid.txt
+ollama-create.txt
+magic-check.txt
