@@ -30,12 +30,18 @@ profile 级插件、按 agent 注册的工具集）被挡在**模型上下文之
 
 | 插件线 | 目标 DSH | 程序入口 |
 |---|---|---|
-| `0.2.x`（`main`） | 0.2.1-alpha.5 及以后 | 本包自带的 `code_run` 传输，预设行 `mode: native` |
+| `0.2.x`（分支 `0.2.x`） | **0.2.1 整线**（`>=0.2.1-alpha.5 <0.2.2-0`） | 本包自带的 `code_run` 传输，预设行 `mode: native` |
 | `0.1.x`（分支 `0.1.x`） | 0.2.0-rc.2 | 内置 `run_code`（由 `both` 附带），本包不注册传输 |
 
 两条线行为一致：标准工具原生，预设自身清单以外的一切（MCP、profile 级插件、按 `agent.ctx`
 注册的工具集）都只能从程序内部调用。`0.2.1` 已在真正的 0.2.1-alpha.5 内核上验证，口径与命令见
 [docs/internals.md](./docs/internals.md#验证)。
+
+> **0.2.2 是另一条线。** 内核在 0.2.2-alpha.2 起重做了工具呈现：`system-prompt/assemble` 瀑布
+> 不再接收 `tools`，`tools.execute()` 改为批量入参，`tools.executionMode` 迁至
+> `ToolExecutionPipeline`，且 `@deepseek-ai/dsh-agent-tool-presentation` 已废弃、不再随
+> web-app/base 发布。`0.2.x` 线**不适用**于 0.2.2，`engines.dsh` 已收紧到
+> `<0.2.2-0`，DSH 会在启动阶段直接报出不兼容，而不是静默失效。
 
 ## 安装
 ![alt text](image.png)

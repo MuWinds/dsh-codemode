@@ -140,3 +140,20 @@ node tools/gen-preset.mjs node_modules/@deepseek-ai/dsh-web-app/presets/standard
 
 `package.json` 的 `engines.dsh` 会在版本不匹配时让 DSH 在**安装/启动阶段**报出可读诊断，
 而不是等到预设挂载失败。
+
+### 为什么 `0.2.x` 线封在 `<0.2.2-0`
+
+`0.2.2-alpha.2` 起内核重做了工具呈现，本线的三个承重点同时失效，且都是**静默**失效
+（不会抛错，只会让遮蔽变成空操作）：
+
+| 本线依赖 | 0.2.2+ 的现实 |
+|---|---|
+| `system-prompt/assemble` 瀑布的 `assembly.tools` | 不再传入；瀑布后才由 provider 结果接回，钩子改不动模型工具列表 |
+| `ctx.tools.execute({callId,name,arguments,...})` | 改为批量 `{calls,agent,signal}`；旧形参在 pipeline 里 `undefined.map` 抛错 |
+| `ctx.tools.executionMode(input)` | 已移除，迁至 `ToolExecutionPipeline.executionMode()` |
+| 预设行 `@deepseek-ai/dsh-agent-tool-presentation` `mode:native` | 包已 `@deprecated`，且**不再是** `dsh-web-app`/`dsh-base` 的依赖；缺失时该行 `never started`，整个 preset 激活失败 |
+| 快照行 `dsh-tool-subagent-control/list-agents` | `exports` 已无该子路径（工具并入主插件），行 `never started`，预设激活失败 |
+
+因此本线把 `engines.dsh` 收紧为 `>=0.2.1-alpha.5 <0.2.2-0`：DSH 的兼容性预检
+（`dsh-app-boot` 的 `evaluatePluginCompatibility`，`includePrerelease: true`）会在启动阶段
+直接拒绝，而不是让用户以为装上了、实际遮蔽没生效。0.2.2 的支持属于另一条线。
