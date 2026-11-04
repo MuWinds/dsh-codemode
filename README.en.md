@@ -38,13 +38,32 @@ their native presentation there.
 
 | Plugin line | Target DSH | Program entry |
 |---|---|---|
-| `0.2.x` (`main`) | 0.2.1-alpha.5 and later, where `dsh-tools` no longer accepts `mode: both` | this package's own `code_run` transport, preset row `mode: native` |
+| `0.3.x` (`main`) | **0.2.2-alpha.3 and later** | this package's `code_run` transport **plus its own `ToolExecutor`** — the only seam that still masks |
+| `0.2.x` (branch `0.2.x`) | **the whole 0.2.1 line** (`>=0.2.1-alpha.5 <0.2.2-0`) | this package's `code_run` transport; masking rides the preset row `mode: native` plus the `system-prompt/assemble` waterfall |
 | `0.1.x` (branch `0.1.x`) | 0.2.0-rc.2, which still has `mode: both` | the built-in `run_code` that `both` adds; this package registers no transport |
 
-Both lines behave the same way: standard tools stay native, and everything outside
-the preset's own list (MCP, profile-level plugins, per-agent tool sets) is reached
-only from inside a program. `0.2.1` is verified against a real 0.2.1-alpha.5 core;
-the recipe is in [docs/internals.en.md](./docs/internals.en.md#verification).
+All three lines behave the same way: standard tools stay native, and everything
+outside the preset's own list (MCP, profile-level plugins, per-agent tool sets) is
+reached only from inside a program.
+
+**Why `0.2.x` and `0.3.x` are separate lines.** DSH `0.2.2-alpha.2` reworked tool
+presentation, and four load-bearing assumptions of the `0.2.x` line broke at
+once — all of them silently:
+
+| `0.2.x` relied on | 0.2.2+ reality |
+|---|---|
+| `assembly.tools` inside the `system-prompt/assemble` waterfall | no longer passed in; `tools` is re-attached from the provider after the waterfall, so a listener cannot change it |
+| `ctx.tools.execute({callId,name,arguments,...})` | takes a batch `{calls,agent,signal}` |
+| `ctx.tools.executionMode(input)` | removed; moved to `ToolExecutionPipeline.executionMode()` |
+| preset row `@deepseek-ai/dsh-agent-tool-presentation` `mode:native` | the package is deprecated and no longer a dependency of `dsh-web-app`/`dsh-base`; when absent the row `never started`, which **fails the whole preset activation** |
+| snapshot row `dsh-tool-subagent-control/list-agents` | that subpath is no longer exported, which also fails preset activation |
+
+`0.3.x` switches the seam to a **plugin-owned `ToolExecutor`**
+(`ctx.tools.setExecutor()`): the registry asks the scope's executor for the
+model-facing schemas, so `describe()` *is* the request surface — exactly what
+masking needs, and a more legitimate owner of that surface than the old hook.
+Install and configuration are identical across lines; the recipe is in
+[docs/internals.en.md](./docs/internals.en.md#verification).
 
 ## Install
 
@@ -98,16 +117,30 @@ Nothing outside the profile was ever modified.
 - **A name nobody attributes stays native.** A schema contributed by another prompt
   provider is in no registry layer, so no rule owns it and it keeps its place in
   the request; only tools whose ownership the registry confirms are masked.
+  Since `0.3.x` there is one extra constraint: an executor's `describe()` does not
+  receive the calling agent's scope, so **its input set is the agent view** — a
+  name resolved by neither the global nor the preset view can only have been
+  registered below the preset (the agent layer), and is judged on that basis
+  (`resolveCatalogView`). That is more precise than the old hook because it reads
+  the exact definition set the registry handed over.
 - **A plugin row inside the preset counts as standard.** The question answered is
   "did this preset register it?", not "does DSH ship it?": adding a row to
   `cordis.patch.yml` keeps its tools native like the standard ones (use
   `hiddenTools` to mask them), while anything installed at the profile level
   (`dsh plugin add`) lands in the global or agent layer and is masked
   automatically.
+- **`0.3.x` carries a real `@deepseek-ai/dsh-tool-executor-native` dependency.**
+  The executor has to actually run tools, and a profile plugin cannot resolve the
+  host's kernel packages, so this package installs that executor and uses it
+  against the host registry (verified across two independent module graphs). It
+  costs ~19 extra packages / 6.6 MB. Execution is still delegated to it: this
+  package never re-implements pre-policy, approval, around-dispatch, or
+  post-execute, because a hand-written pipeline is exactly how a plugin silently
+  drops policy.
 - **The sub-call scheduler is implemented here.** The built-in transport joins the
   agent loop's scheduler through the private `TOOL_RUNTIME_SCHEDULER`; this package
-  reproduces the same observable contract from the public
-  `ctx.tools.executionMode()` (`exclusive` serialises as a barrier, `parallel` is
+  reproduces the same observable contract from a definition's
+  `isConcurrencySafe` (`exclusive` serialises as a barrier, `parallel` is
   capped at `maxParallelSubCalls`). The difference: this pool orders sub-calls
   **within one program only**, never relative to other tool calls in the same
   model step.

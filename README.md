@@ -30,11 +30,27 @@ profile 级插件、按 agent 注册的工具集）被挡在**模型上下文之
 
 | 插件线 | 目标 DSH | 程序入口 |
 |---|---|---|
-| `0.2.x`（`main`） | 0.2.1-alpha.5 及以后 | 本包自带的 `code_run` 传输，预设行 `mode: native` |
+| `0.3.x`（`main`） | **0.2.2-alpha.3 及以后** | 本包自带 `code_run` 传输 + **插件自带的 `ToolExecutor`**（遮蔽的唯一接缝） |
+| `0.2.x`（分支 `0.2.x`） | **0.2.1 整线**（`>=0.2.1-alpha.5 <0.2.2-0`） | 本包自带 `code_run` 传输；遮蔽靠预设行 `mode: native` + `system-prompt/assemble` 瀑布 |
 | `0.1.x`（分支 `0.1.x`） | 0.2.0-rc.2 | 内置 `run_code`（由 `both` 附带），本包不注册传输 |
 
-两条线行为一致：标准工具原生，预设自身清单以外的一切（MCP、profile 级插件、按 `agent.ctx`
-注册的工具集）都只能从程序内部调用。`0.2.1` 已在真正的 0.2.1-alpha.5 内核上验证，口径与命令见
+三条线对外行为一致：标准工具原生，预设自身清单以外的一切（MCP、profile 级插件、按 `agent.ctx`
+注册的工具集）都只能从程序内部调用。
+
+**为什么分成 `0.2.x` 与 `0.3.x` 两条线。** DSH `0.2.2-alpha.2` 重做了工具呈现，
+`0.2.x` 线的四个承重点同时失效，且都是静默失效：
+
+| `0.2.x` 线依赖 | 0.2.2+ 的现实 |
+|---|---|
+| `system-prompt/assemble` 瀑布的 `assembly.tools` | 不再传入；瀑布后才由 provider 结果接回，钩子改不动工具列表 |
+| `ctx.tools.execute({callId,name,arguments,...})` | 改为批量 `{calls,agent,signal}` |
+| `ctx.tools.executionMode(input)` | 移除，迁至 `ToolExecutionPipeline.executionMode()` |
+| 预设行 `@deepseek-ai/dsh-agent-tool-presentation` `mode:native` | 包已废弃且不再是 `dsh-web-app`/`dsh-base` 的依赖；缺失时整行 `never started`，**预设激活失败** |
+| 快照行 `dsh-tool-subagent-control/list-agents` | `exports` 已无该子路径，同样导致预设激活失败 |
+
+`0.3.x` 把接缝换成 **插件自带的 `ToolExecutor`**（`ctx.tools.setExecutor()`）：注册表向当前
+作用域的 executor 要模型可见的 schema，所以 `describe()` 就是请求面——这正是遮蔽要的东西，
+而且比旧钩子更正当（它是这块的官方归属者）。两条线的安装与配置方式一致，口径与命令见
 [docs/internals.md](./docs/internals.md#验证)。
 
 ## 安装
@@ -81,12 +97,20 @@ dsh plugin --profile desktop remove dsh-codemode
   挂在 host 层而不是预设里）作用域规则自动失效，只保留名字规则并打出一次 warn，不会误遮蔽。
   「注册表解析不出的名字」也保持原生——那是别的 prompt provider 贡献的 schema，谁也不拥有它，
   只遮蔽能确认归属的工具。
+  自 `0.3.x` 起还多一层约束：executor 的 `describe()` 拿不到调用方的 agent scope，所以**入参本身就
+  是 agent 视图**——凡既不在全局视图也不在预设视图里的名字，只可能注册在预设之下（agent 层），
+  据此判定（`resolveCatalogView`）。这比旧钩子更精确，因为它读的是注册表实际交来的那份定义集。
 - **预设清单内的插件行算「标准」。** 判定是「本预设自己注册的」而不是「随 DSH 发布的」：
   往 `cordis.patch.yml` 的插件列表里加一行，它注册的工具就和标准工具一样保持原生；需要遮蔽时
   用 `hiddenTools`。反过来，只要插件挂在 profile（`dsh plugin add`），它的工具就在全局层或
   agent 层，会被自动遮蔽。
+- **`0.3.x` 自带一份 `@deepseek-ai/dsh-tool-executor-native` 依赖。** executor 必须能真正执行
+  工具，而 profile 插件解析不到宿主的内核包，所以本包把该执行器作为真实依赖装上，用它的
+  executor 驱动宿主注册表（跨两份独立模块图已验证）。副作用是安装多约 19 个包 / 6.6 MB。
+  执行本身仍然委托给它，本包不重写 pre-policy / 审批 / around-dispatch / post-execute 管线——
+  手写一份管线正是插件静默丢掉策略的方式。
 - **子调用调度是本包自己实现的。** 内置传输通过私有的 `TOOL_RUNTIME_SCHEDULER` 接入 agent
-  loop 的调度器；本包改用公开的 `ctx.tools.executionMode()` 复刻同一份可观察契约
+  loop 的调度器；本包按工具定义的 `isConcurrencySafe` 复刻同一份可观察契约
   （`exclusive` 串行成屏障、`parallel` 按 `maxParallelSubCalls` 限流）。差别在于：本包的池
   只对**同一程序内**的子调用排序，不与同一模型步中的其他工具调用互相排序。
 - **不提供程序级沙箱升级。** 内置的 `sandbox_permissions` / `justification` 依赖模块私有的

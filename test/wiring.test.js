@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { apply } from '../lib/index.js';
+import { markNested } from '../lib/executor.js';
 
 /** The tag `@deepseek-ai/dsh-scope` writes onto a preset-scoped context. */
 const SCOPE_TAG = Symbol('dsh.scope');
@@ -11,24 +12,32 @@ const LAYERS = {
   // The preset's own composition: its standard rows plus this package.
   preset: ['pwsh', 'code_run', 'code_tools_list', 'code_tools_search', 'code_tools_describe', 'code_debug'],
   // The global layer: MCP client tools and other deployment-level bundles.
-  global: ['run_code', 'mcp_probe', 'mcp__fake__get_ticker', 'mcp__fake__place_order', 'mcp__fake__account_balance'],
+  // `run_code` is deliberately absent: DSH 0.2.2 reserves that name and
+  // `tools.register()` throws on it, so it can never reach an executor's
+  // `describe()` input. The `RESERVED_RUN_TOOL` rule is covered in
+  // rules.test.js.
+  global: ['mcp_probe', 'mcp__fake__get_ticker', 'mcp__fake__place_order', 'mcp__fake__account_balance'],
   // The agent layer: tools a plugin registers through `agent.ctx`.
   agent: ['spawn_teammate'],
 };
 
+/** A definition with the schema fields the registry projects. */
+function definition(name, description, extra = {}) {
+  return { name, description, parameters: { type: 'object', properties: {} }, ...extra };
+}
+
 const definitions = new Map([
-  ['run_code', { name: 'run_code', description: 'PTC transport' }],
-  ['pwsh', { name: 'pwsh', description: 'Run commands in a PowerShell shell' }],
-  ['code_run', { name: 'code_run', description: 'Program transport' }],
-  ['mcp_probe', { name: 'mcp_probe', description: 'Probe an MCP server' }],
-  ['spawn_teammate', { name: 'spawn_teammate', description: 'Create a teammate' }],
-  ['mcp__fake__get_ticker', { name: 'mcp__fake__get_ticker', description: 'Get the latest ticker' }],
-  ['mcp__fake__place_order', { name: 'mcp__fake__place_order', description: 'Place an order' }],
-  ['mcp__fake__account_balance', { name: 'mcp__fake__account_balance', description: 'Read the balance' }],
-  ['code_tools_list', { name: 'code_tools_list', description: 'List tools' }],
-  ['code_tools_search', { name: 'code_tools_search', description: 'Search tools' }],
-  ['code_tools_describe', { name: 'code_tools_describe', description: 'Describe a tool' }],
-  ['code_debug', { name: 'code_debug', description: 'Report masking' }],
+  ['pwsh', definition('pwsh', 'Run commands in a PowerShell shell', { isConcurrencySafe: () => true })],
+  ['code_run', definition('code_run', 'Program transport')],
+  ['mcp_probe', definition('mcp_probe', 'Probe an MCP server')],
+  ['spawn_teammate', definition('spawn_teammate', 'Create a teammate')],
+  ['mcp__fake__get_ticker', definition('mcp__fake__get_ticker', 'Get the latest ticker')],
+  ['mcp__fake__place_order', definition('mcp__fake__place_order', 'Place an order')],
+  ['mcp__fake__account_balance', definition('mcp__fake__account_balance', 'Read the balance')],
+  ['code_tools_list', definition('code_tools_list', 'List tools')],
+  ['code_tools_search', definition('code_tools_search', 'Search tools')],
+  ['code_tools_describe', definition('code_tools_describe', 'Describe a tool')],
+  ['code_debug', definition('code_debug', 'Report masking')],
 ]);
 
 /** One name's resolved definition, given the layers the caller's scope sees. */
@@ -44,30 +53,62 @@ function resolve(name, visibleLayers) {
  *
  * The fake registry models the three layers the real one has, so the scope rule
  * is exercised exactly as it is in DSH: `get(name)` is the global view and
- * `get(name, scopeKey)` adds the preset's own layer (and, for an agent scope,
- * the agent layer on top).
+ * `get(name, scopeKey)` adds the preset's own layer.
+ *
+ * The registry in DSH 0.2.2 asks the selected executor for the model-facing
+ * schemas, so `executor.describe(definitions(agent))` is the request surface and
+ * this harness reproduces that call directly.
  */
 function harness(config = {}, { runtime, globalScope = false } = {}) {
   const registered = [];
-  const guards = [];
-  const listeners = [];
+  const sections = [];
   const effects = [];
   const logs = [];
+  const forwarded = [];
   const presetKey = {};
   const agentKey = {};
+  // The delegate stands in for the deployment's native executor: it records
+  // what reached it, which is exactly what a real pipeline would have executed.
+  const createDelegate = () => ({
+    describe: (tools) => ({ schemas: tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    })) }),
+    execute: async (input) => {
+      forwarded.push(...(input.calls ?? []).map((call) => call.name));
+      return {
+        results: (input.calls ?? []).map((call) => ({
+          callId: call.id,
+          result: { isError: false, value: { ok: call.name }, content: [] },
+        })),
+        additionalContexts: [],
+        concluded: false,
+      };
+    },
+  });
+  let executor;
   const visibleFor = (scope) => {
     if (scope === undefined) return ['global'];
     if (scope === agentKey) return ['global', 'preset', 'agent'];
     if (scope === presetKey) return ['global', 'preset'];
     return ['global'];
   };
+  /** Everything a scope can see, as `describe()` receives it. */
+  const definitionsFor = (scope = agentKey) => visibleFor(scope)
+    .flatMap((layer) => LAYERS[layer])
+    .map((name) => definitions.get(name));
   const ctx = {
     logger: {
       info: (message) => logs.push(['info', String(message)]),
       warn: (message) => logs.push(['warn', String(message)]),
       debug: (message) => logs.push(['debug', String(message)]),
     },
-    get: (name) => (name === 'ptcRuntime' ? runtime : undefined),
+    get: (service) => {
+      if (service === 'ptcRuntime') return runtime;
+      if (service === 'systemPrompt') return { getSectionOrder: () => 5000 };
+      return undefined;
+    },
     effect: (factory, label) => {
       const entry = { disposer: factory(), label };
       effects.push(entry);
@@ -79,58 +120,41 @@ function harness(config = {}, { runtime, globalScope = false } = {}) {
     tools: {
       register: (definition) => {
         registered.push(definition);
+        // The real registry makes a registered tool visible in the scope that
+        // registered it, so a custom transport name must join the preset layer.
+        if (!definitions.has(definition.name)) {
+          definitions.set(definition.name, definition);
+          LAYERS.preset.push(definition.name);
+        }
         return () => {};
       },
-      guard: (guard) => {
-        guards.push(guard);
+      setExecutor: (candidate) => {
+        executor = candidate;
         return () => {};
       },
-      schemas: (scope) => visibleFor(scope).flatMap((layer) => LAYERS[layer]).map((name) => definitions.get(name)),
+      schemas: (scope) => definitionsFor(scope),
+      definitions: (scope) => definitionsFor(scope),
       get: (name, scope) => resolve(name, visibleFor(scope)),
-      view: () => ({ visible: definitions, knownNames: new Set(definitions.keys()), restrictableNames: new Set(definitions.keys()) }),
-      executionMode: () => ({ kind: 'exclusive' }),
-      execute: async () => ({ isError: false, value: null }),
+      execute: async (input) => ({ results: [], additionalContexts: [], concluded: false }),
     },
-    on: (event, listener, options) => {
-      listeners.push({ event, listener, options });
-      return () => {};
-    },
+    on: () => () => {},
   };
   // Mounted inside the preset: the context inherits the preset's scope tag.
   // Mounted at the host level (`globalScope: true`) there is no tag at all.
   if (!globalScope) ctx[SCOPE_TAG] = presetKey;
-  apply(ctx, config);
-  // The context dsh-agent-loop hands `systemPrompt.assemble()`: the calling
-  // session's scope plus the agent identity.
-  return { registered, guards, listeners, logs, effects, ctx, presetKey, agentKey, context: { scope: agentKey, agent: { id: 'agent-1' } } };
+  apply(ctx, { ...config, createDelegate });
+  /** What the model would see for one assembly. */
+  const describeFor = (scope = agentKey) => executor.describe(definitionsFor(scope));
+  return { registered, sections, logs, effects, ctx, presetKey, agentKey, executor, describeFor, definitionsFor, forwarded };
 }
 
-/** A request as a native presentation assembles it inside this preset. */
-function codemodeAssembly() {
-  return {
-    tools: [
-      { name: 'pwsh' },
-      { name: 'run_code' },
-      { name: 'code_run' },
-      { name: 'mcp_probe' },
-      { name: 'spawn_teammate' },
-      { name: 'mcp__fake__get_ticker' },
-      { name: 'mcp__fake__place_order' },
-      { name: 'mcp__fake__account_balance' },
-      { name: 'code_tools_list' },
-      { name: 'code_tools_search' },
-      { name: 'code_tools_describe' },
-    ],
-    sections: [
-      { name: 'deployment:persona-prefix', text: 'persona' },
-      { name: 'tools:sdk', text: 'OLD GENERATED SDK', interpolate: false },
-    ],
-    contexts: [{ name: 'sandbox', text: 'policy' }],
-  };
+/** The names the current request would carry. */
+function catalogFor(result) {
+  return result.schemas.map((schema) => schema.name);
 }
 
 test('apply registers the discovery tools plus one transport, each with a valid definition', () => {
-  const { registered , context } = harness();
+  const { registered } = harness();
   assert.deepEqual(registered.map((tool) => tool.name), [
     'code_tools_list',
     'code_tools_search',
@@ -148,193 +172,207 @@ test('apply registers the discovery tools plus one transport, each with a valid 
 });
 
 test('the transport never claims the reserved run_code name', () => {
-  const { registered , context } = harness();
+  const { registered } = harness();
   assert.ok(!registered.some((tool) => tool.name === 'run_code'));
 });
 
-test('apply installs one monotonic guard that only blocks model-direct masked calls', () => {
-  const { guards, agentKey , context } = harness();
-  assert.equal(guards.length, 1);
-  const guard = guards[0];
-
-  // Model-direct call to a masked MCP tool: denied with a self-healing hint.
-  const denial = guard({ name: 'mcp__fake__get_ticker', agent: agentKey, callId: 'call-1' });
-  assert.equal(typeof denial, 'string');
-  assert.match(denial, /code_tools_search/);
-  assert.match(denial, /code_run/);
-
-  // A deployment-level bundle and an agent-scope tool are masked the same way.
-  assert.equal(typeof guard({ name: 'mcp_probe', agent: agentKey, callId: 'call-1b' }), 'string');
-  assert.equal(typeof guard({ name: 'spawn_teammate', agent: agentKey, callId: 'call-1c' }), 'string');
-
-  // Inside a program: the sub-call carries a parent token or a `:ptc:` id.
-  assert.equal(guard({ name: 'mcp__fake__get_ticker', agent: agentKey, parent: { token: true }, callId: 'call-1' }), undefined);
-  assert.equal(guard({ name: 'mcp__fake__get_ticker', agent: agentKey, callId: 'call-1:ptc:1' }), undefined);
-
-  // Visibility of a masked discovery tool is guarded the same way.
-  assert.equal(typeof guard({ name: 'code_tools_search', agent: agentKey, callId: 'call-2' }), 'string');
-
-  // Everything the model can legitimately call passes, including both transports.
-  assert.equal(guard({ name: 'pwsh', agent: agentKey, callId: 'call-3' }), undefined);
-  assert.equal(guard({ name: 'code_run', agent: agentKey, callId: 'call-4' }), undefined);
-  assert.equal(guard({ name: 'run_code', agent: agentKey, callId: 'call-5' }), undefined);
-  // A name the registry cannot resolve is left to the registry's own UNKNOWN_TOOL.
-  assert.equal(guard({ name: 'unknown_tool', agent: agentKey, callId: 'call-6' }), undefined);
-  assert.equal(guard(undefined), undefined);
+test('apply installs exactly one executor, which is the request surface', () => {
+  const { executor } = harness();
+  assert.ok(executor, 'apply must install a ToolExecutor');
+  assert.equal(typeof executor.describe, 'function');
+  assert.equal(typeof executor.execute, 'function');
 });
 
-test('a host-level mount has no scope tag: the scope rule degrades to name rules', async () => {
-  const { guards, listeners, logs , context } = harness({}, { globalScope: true });
-  // Without a scope tag only the name rules apply: `spawn_teammate` is not an
-  // MCP-prefixed name, so it stays callable and stays in the request.
-  assert.equal(guards[0]({ name: 'spawn_teammate', callId: 'c' }), undefined);
-  assert.equal(typeof guards[0]({ name: 'mcp__fake__get_ticker', callId: 'c' }), 'string');
-  assert.ok(logs.some(([level, message]) => level === 'warn' && message.includes('no registry scope tag')));
+test('describe() masks everything outside the preset and keeps the composition plus the transport', () => {
+  const { describeFor, logs } = harness();
+  const result = describeFor();
+  assert.deepEqual(catalogFor(result), ['pwsh', 'code_run']);
 
-  const assembly = codemodeAssembly();
-  const result = await listeners[0].listener(assembly, context, async () => assembly);
-  assert.deepEqual(result.tools.map((tool) => tool.name), [
-    'pwsh',
-    'run_code',
-    'code_run',
-    'mcp_probe',
-    'spawn_teammate',
-  ]);
+  // 4 masked: 3 MCP-named tools plus the global plugin bundle `mcp_probe`.
+  // `spawn_teammate` is the agent layer and is masked too, hence plugin=2.
+  const maskLogs = logs.filter(([level, message]) => level === 'info' && message.includes('masked'));
+  assert.equal(maskLogs.length, 1);
+  assert.match(maskLogs[0][1], /masked 5 non-standard tool\(s\) \(fake=3, plugin=2\)/);
+  assert.match(maskLogs[0][1], /request tools: pwsh, code_run/);
+});
+
+test('the executor supplies the Code Mode section in place of the generated SDK', () => {
+  const { executor, definitionsFor } = harness();
+  assert.equal(executor.sections.length, 1);
+  const [section] = executor.sections;
+  assert.equal(section.name, 'tools:sdk');
+  assert.equal(section.interpolate, false);
+  // Resolve the text the way the registry does: after describe() has run, so
+  // the masked-tool counts are the ones this assembly saw.
+  executor.describe(definitionsFor());
+  const text = section.text();
+  assert.match(text, /## Code Mode/);
+  assert.match(text, /`code_run`/);
+  assert.match(text, /`fake` \(MCP server\) — 3 tool\(s\)/);
+  assert.match(text, /`plugin` \(contributed by plugins outside this preset\) — 2 tool\(s\)/);
+  // No hidden tool's own name leaks into the request surface.
+  assert.doesNotMatch(text, /mcp__fake__get_ticker/);
+});
+
+test('the section reports the masking counts from the last describe()', () => {
+  const { executor, definitionsFor } = harness();
+  executor.describe(definitionsFor());
+  const text = executor.sections[0].text();
+  assert.match(text, /5 tool\(s\) are outside this preset/);
+});
+
+test('nativeTools pins a foreign tool back into the request, hiddenTools does the reverse', () => {
+  const { describeFor } = harness({ nativeTools: ['spawn_teammate', 'mcp_probe'], hiddenTools: ['pwsh'] });
+  const names = catalogFor(describeFor());
+  assert.ok(!names.includes('pwsh'), 'hiddenTools removes a preset-owned tool');
+  assert.ok(names.includes('mcp_probe'), 'nativeTools pins a global tool');
+  assert.ok(names.includes('spawn_teammate'), 'nativeTools pins an agent-layer tool');
+  assert.ok(names.includes('code_run'));
+});
+
+test('the transports stay native even when listed in hiddenTools', () => {
+  const { describeFor } = harness({ hiddenTools: ['code_run'] });
+  const names = catalogFor(describeFor());
+  assert.ok(names.includes('code_run'), 'the transport is never hidden, whatever the config says');
+});
+
+test('nativeScope false keeps deployment-level tools native', () => {
+  const { describeFor } = harness({ nativeScope: false });
+  const names = catalogFor(describeFor());
+  assert.ok(names.includes('mcp_probe'));
+  assert.ok(names.includes('spawn_teammate'));
+  assert.ok(names.includes('pwsh'));
+});
+
+test('a host-level mount has no scope tag: the scope rule degrades to name rules', () => {
+  const { describeFor, logs } = harness({}, { globalScope: true });
+  const names = catalogFor(describeFor());
+  // Without a scope tag only the name rules apply: agent-layer and
+  // deployment-bundle tools are not MCP-prefixed, so they stay in the request.
+  assert.ok(names.includes('spawn_teammate'));
+  assert.ok(names.includes('mcp_probe'));
+  // The `mcp__` prefix rule still hides MCP tools.
+  assert.ok(!names.includes('mcp__fake__get_ticker'));
+  assert.ok(logs.some(([level, message]) => level === 'warn' && message.includes('no registry scope tag')));
 });
 
 test('apply owns a plugin-scope effect that disposes the retention registry', async () => {
-  const { effects , context } = harness();
+  const { effects } = harness();
   const retentionEffect = effects.find((entry) => entry.label === 'dsh-codemode retained environments');
   assert.ok(retentionEffect, 'unloading the plugin must release retained environments');
   await retentionEffect.disposer?.();
 });
 
-test('the assemble hook masks everything outside the preset and replaces the generated SDK section', async () => {
-  const { listeners, logs , context } = harness();
-  assert.equal(listeners.length, 1);
-  const { event, listener, options } = listeners[0];
-  assert.equal(event, 'system-prompt/assemble');
-  assert.deepEqual(options, { prepend: true });
+test('execute() denies a model-direct call to a masked tool and forwards the rest', async () => {
+  const { executor } = harness();
+  const denied = await executor.execute({
+    calls: [{ id: 'call-1', name: 'mcp__fake__get_ticker', arguments: '{}' }],
+    agent: {},
+    signal: new AbortController().signal,
+  });
+  const result = denied.results[0].result;
+  assert.equal(result.isError, true);
+  assert.match(result.error.message, /code_tools_search/);
+  assert.match(result.error.message, /code_run/);
 
-  const assembly = codemodeAssembly();
-  const result = await listener(assembly, context, async () => assembly);
-
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['pwsh', 'run_code', 'code_run']);
-  assert.equal(result.sections[0].text, 'persona');
-  assert.equal(result.sections[1].name, 'tools:sdk');
-  assert.match(result.sections[1].text, /## Code Mode/);
-  assert.match(result.sections[1].text, /`code_run`/);
-  assert.equal(result.sections[1].interpolate, false);
-  assert.doesNotMatch(result.sections[1].text, /OLD GENERATED SDK/);
-  assert.match(result.sections[1].text, /`fake` \(MCP server\) — 3 tool\(s\)/);
-  assert.match(result.sections[1].text, /`plugin` \(contributed by plugins outside this preset\) — 2 tool\(s\)/);
-  // Contexts and every other section are untouched.
-  assert.deepEqual(result.contexts, assembly.contexts);
-  const maskLogs = logs.filter(([level, message]) => level === 'info' && message.includes('masked'));
-  assert.equal(maskLogs.length, 1);
-  assert.match(maskLogs[0][1], /masked 5 non-standard tool\(s\) \(fake=3, plugin=2\)/);
-  assert.match(maskLogs[0][1], /request tools: pwsh, run_code, code_run/);
+  // An agent-layer tool is denied the same way.
+  const agentDenied = await executor.execute({
+    calls: [{ id: 'call-1b', name: 'spawn_teammate', arguments: '{}' }],
+    agent: {},
+    signal: new AbortController().signal,
+  });
+  assert.equal(agentDenied.results[0].result.isError, true);
 });
 
-test('nativeTools pins a foreign tool back into the request, hiddenTools does the reverse', async () => {
-  const { listeners , context } = harness({ nativeTools: ['spawn_teammate', 'mcp_probe'], hiddenTools: ['pwsh'] });
-  const assembly = codemodeAssembly();
-  const result = await listeners[0].listener(assembly, context, async () => assembly);
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['run_code', 'code_run', 'mcp_probe', 'spawn_teammate']);
+test('execute() lets a program sub-call through, marked on the signal or by call id', async () => {
+  const { executor, forwarded } = harness();
+  // A marked signal is what the transport hands the registry.
+  const marked = markNested(new AbortController().signal);
+  await executor.execute({
+    calls: [{ id: 'call-1', name: 'mcp__fake__get_ticker', arguments: '{}' }],
+    agent: {},
+    signal: marked,
+  });
+  assert.deepEqual(forwarded, ['mcp__fake__get_ticker'], 'a marked signal marks the call as program-nested');
+
+  // The `:ptc:` call-id suffix is the second, belt-and-braces signal.
+  forwarded.length = 0;
+  await executor.execute({
+    calls: [{ id: 'call-1:ptc:1', name: 'mcp__fake__get_ticker', arguments: '{}' }],
+    agent: {},
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(forwarded, ['mcp__fake__get_ticker']);
 });
 
-test('the transports stay native even when listed in hiddenTools', async () => {
-  const { listeners , context } = harness({ hiddenTools: ['code_run', 'run_code'] });
-  const assembly = codemodeAssembly();
-  const result = await listeners[0].listener(assembly, context, async () => assembly);
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['pwsh', 'run_code', 'code_run']);
+test('execute() forwards a batch of preset-owned tools untouched', async () => {
+  const { executor, forwarded } = harness();
+  const result = await executor.execute({
+    calls: [{ id: 'call-1', name: 'pwsh', arguments: '{}' }],
+    agent: {},
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(forwarded, ['pwsh']);
+  assert.equal(result.results[0].result.isError, false);
 });
 
-test('nativeScope false keeps deployment-level tools native', async () => {
-  const { listeners , context } = harness({ nativeScope: false });
-  const assembly = codemodeAssembly();
-  const result = await listeners[0].listener(assembly, context, async () => assembly);
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['pwsh', 'run_code', 'code_run', 'mcp_probe', 'spawn_teammate']);
+test('guard false skips the denial, sdkSection false drops the section', async () => {
+  const { executor, describeFor, forwarded } = harness({ guard: false, sdkSection: false, debug: false });
+  assert.equal(executor.sections.length, 0);
+
+  // With the denial off, a masked name reaches the delegate.
+  await executor.execute({
+    calls: [{ id: 'call-1', name: 'mcp__fake__get_ticker', arguments: '{}' }],
+    agent: {},
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(forwarded, ['mcp__fake__get_ticker']);
+
+  // The catalog is still masked: the executor is the only catalog provider.
+  assert.deepEqual(catalogFor(describeFor()), ['pwsh', 'code_run']);
 });
 
-test('a native presentation has no tools:sdk to replace, so the hook appends one', async () => {
-  const { listeners , context } = harness();
-  const { listener } = listeners[0];
-  const assembly = {
-    ...codemodeAssembly(),
-    sections: [{ name: 'deployment:persona-prefix', text: 'persona' }],
-  };
-
-  const result = await listener(assembly, context, async () => assembly);
-  assert.equal(result.sections.length, 2);
-  assert.equal(result.sections[0].text, 'persona');
-  assert.equal(result.sections[1].name, 'tools:sdk');
-  assert.equal(result.sections[1].interpolate, false);
-  assert.match(result.sections[1].text, /## Code Mode/);
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['pwsh', 'run_code', 'code_run']);
-});
-
-test('a retained runtime switches the section to REPL syntax', async () => {
-  const { listeners , context } = harness({}, { runtime: { programFormat: 'repl' } });
-  const { listener } = listeners[0];
-  const assembly = codemodeAssembly();
-
-  const result = await listener(assembly, context, async () => assembly);
-  assert.match(result.sections[1].text, /retained TypeScript REPL/);
-  assert.doesNotMatch(result.sections[1].text, /run as the body of an async function/);
-});
-
-test('a standard assembly (no marker tool) is returned byte-for-byte unchanged', async () => {
-  const { listeners, logs , context } = harness();
-  const { listener } = listeners[0];
-  const assembly = {
-    tools: [{ name: 'pwsh' }, { name: 'mcp__fake__get_ticker' }],
-    sections: [{ name: 'tools:sdk', text: 'native has no sdk section on purpose', interpolate: false }],
-    contexts: [],
-  };
-  const result = await listener(assembly, context, async () => assembly);
-  assert.equal(result, assembly);
-  assert.equal(result.tools.length, 2);
-  assert.equal(logs.filter(([, message]) => message.includes('masked')).length, 0);
-});
-
-test('another PTC preset (run_code, no marker tool) is left alone', async () => {
-  const { listeners , context } = harness();
-  const { listener } = listeners[0];
-  const assembly = {
-    tools: [{ name: 'run_code' }, { name: 'mcp__fake__get_ticker' }],
-    sections: [{ name: 'tools:sdk', text: 'SDK OF THE OTHER PRESET', interpolate: false }],
-    contexts: [],
-  };
-  const result = await listener(assembly, context, async () => assembly);
-  assert.equal(result, assembly);
-  assert.equal(result.sections[0].text, 'SDK OF THE OTHER PRESET');
-});
-
-test('a malformed assembly never breaks a turn', async () => {
-  const { listeners , context } = harness();
-  const { listener } = listeners[0];
-  const assembly = { tools: [{ name: 'code_tools_list' }], get sections() { throw new Error('boom'); } };
-  const result = await listener(assembly, {}, async () => assembly);
-  assert.equal(result, assembly);
-});
-
-test('guard false skips the guard, sdkSection false keeps the SDK', async () => {
-  const { guards, listeners , context } = harness({ guard: false, sdkSection: false, debug: false });
-  assert.equal(guards.length, 0);
-
-  const assembly = codemodeAssembly();
-  const result = await listeners[0].listener(assembly, context, async () => assembly);
-  assert.deepEqual(result.tools.map((tool) => tool.name), ['pwsh', 'run_code', 'code_run']);
-  assert.equal(result.sections[1].text, 'OLD GENERATED SDK');
-});
-
-test('a custom runToolName reaches the guard, the section text and the registered tool', async () => {
-  const { registered, guards, listeners , context } = harness({ runToolName: 'my_run' });
+test('a custom runToolName reaches the denial, the section text and the registered tool', async () => {
+  const { registered, executor, describeFor, definitionsFor } = harness({ runToolName: 'my_run' });
   assert.ok(registered.some((tool) => tool.name === 'my_run'));
-  assert.match(guards[0]({ name: 'mcp__fake__get_ticker', callId: 'c' }), /my_run/);
+  const names = catalogFor(describeFor());
+  assert.ok(names.includes('my_run'));
 
-  const assembly = codemodeAssembly();
-  const result = await listeners[0].listener(assembly, context, async () => assembly);
-  assert.match(result.sections[1].text, /`my_run`/);
+  executor.describe(definitionsFor());
+  assert.match(executor.sections[0].text(), /`my_run`/);
+
+  const denied = await executor.execute({
+    calls: [{ id: 'c', name: 'mcp__fake__get_ticker', arguments: '{}' }],
+    agent: {},
+    signal: new AbortController().signal,
+  });
+  assert.match(denied.results[0].result.error.message, /my_run/);
 });
+
+test('a retained runtime switches the section to REPL syntax', () => {
+  const { executor, definitionsFor } = harness({}, { runtime: { programFormat: 'repl' } });
+  executor.describe(definitionsFor());
+  const text = executor.sections[0].text();
+  assert.match(text, /retained TypeScript REPL/);
+  assert.doesNotMatch(text, /run as the body of an async function/);
+});
+
+test('debug false drops the debug tool but keeps the other three', () => {
+  const { registered } = harness({ debug: false });
+  assert.deepEqual(registered.map((tool) => tool.name), [
+    'code_tools_list',
+    'code_tools_search',
+    'code_tools_describe',
+    'code_run',
+  ]);
+});
+
+test('code_debug reports the executor decisions, which proves masking ran', async () => {
+  const { registered, executor, definitionsFor } = harness();
+  executor.describe(definitionsFor());
+  const debug = registered.find((tool) => tool.name === 'code_debug');
+  const value = await debug.execute({}, { agent: undefined });
+  assert.equal(value.assemblies, 1);
+  assert.equal(value.recent[0].hidden.total, 5);
+});
+

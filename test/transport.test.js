@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createTransportTool, parameterSchema, ProgramFailedError } from '../lib/transport.js';
+import { NESTED_MARK } from '../lib/executor.js';
 import { normalizeConfig } from '../lib/rules.js';
 
 /** Let queued pool work start and settle. */
@@ -43,10 +44,18 @@ function build({ runtime = fakeRuntime(), retention, schemas = VISIBLE, execute,
     },
     tools: {
       schemas: () => schemas,
-      executionMode: (input) => ({ kind: modes[input.name] ?? 'exclusive' }),
+      get: (name) => schemas.find((schema) => schema.name === name),
+      // DSH 0.2.2 takes a batch. The fake mirrors the registry's shape: one
+      // settled result per input call, correlated by call id.
       execute: async (input) => {
         executed.push(input);
-        return execute ? execute(input) : { isError: false, value: `ran ${input.name}` };
+        const calls = input.calls ?? [];
+        const results = [];
+        for (const call of calls) {
+          const outcome = execute ? await execute({ ...call, signal: input.signal }) : { isError: false, value: `ran ${call.name}` };
+          results.push({ callId: call.id, result: outcome });
+        }
+        return { results, additionalContexts: [], concluded: false };
       },
     },
   };
@@ -142,11 +151,14 @@ test('sub-calls go through the public registry execute() with the nested marker'
 
   assert.deepEqual(results, ['ran pwsh', 'ran mcp__fake__get_ticker']);
   assert.equal(executed.length, 2, 'exactly the calls the program made must dispatch');
-  assert.equal(executed[0].name, 'pwsh');
-  assert.equal(executed[0].callId, 'call-1:ptc:1');
-  assert.deepEqual(executed[0].parent, { t: 1 }, 'the outer execution token is the nested marker');
-  assert.equal(executed[0].rootCallId, 'call-1');
-  assert.equal(executed[1].callId, 'call-1:ptc:2');
+  // DSH 0.2.2 takes a batch; the nesting marker rides the batch signal because
+  // the batch input has no `parent` field for a plugin transport to set.
+  const [first, second] = executed;
+  assert.equal(first.calls.length, 1);
+  assert.equal(first.calls[0].name, 'pwsh');
+  assert.equal(first.calls[0].id, 'call-1:ptc:1');
+  assert.equal(first.signal[NESTED_MARK], true, 'the batch signal carries the nested marker');
+  assert.equal(second.calls[0].id, 'call-1:ptc:2');
 });
 
 test('a binding reached after the program ended is refused', async () => {
@@ -331,9 +343,10 @@ test('a sub-call the program queued but never reached is abandoned, not executed
   const { tool } = build({
     runtime,
     config: { maxParallelSubCalls: 1 },
-    modes: { pwsh: 'parallel' },
-    execute: async (input) => {
-      started.push(input.arguments.id);
+    execute: async (call) => {
+      // The batch carries model-facing JSON text; parse it the way the
+      // registry's own pipeline would.
+      started.push(JSON.parse(call.arguments).id);
       await new Promise((resolve) => setTimeout(resolve, 10));
       return { isError: false, value: null };
     },

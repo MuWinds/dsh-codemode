@@ -35,15 +35,17 @@ const PROJECT = resolve(HERE, '..');
 const DSH_HOME = process.env.DSH_HOME ?? join(homedir(), '.dsh');
 const OUTPUT = join(PROJECT, 'cordis.patch.yml');
 
-/** Rows this preset adds on top of the standard composition. */
+/**
+ * Rows this preset adds on top of the standard composition.
+ *
+ * There is deliberately no `tool-presentation` row: DSH 0.2.2 deprecated
+ * `@deepseek-ai/dsh-agent-tool-presentation`, dropped it from the `dsh-base` and
+ * `dsh-web-app` dependency graphs, and mounts native execution through the
+ * `tool-executor-native` row in `dsh-base` instead. A row naming a package the
+ * deployment no longer installs fails to import, and a failed import is fatal to
+ * the whole preset activation (`mountPreset` rejects on `audit.failed`).
+ */
 const EXTRA_ROWS = [
-  '          - id: tool-presentation',
-  "            name: '@deepseek-ai/dsh-agent-tool-presentation'",
-  '            config:',
-  '              # Standard tools stay natively callable. DSH 0.2.1 removed the',
-  '              # `both` mode, so the program transport is supplied by this',
-  '              # package instead of by the presentation row.',
-  '              mode: native',
   '          - id: codemode',
   "            name: 'dsh-codemode'",
   '            config:',
@@ -58,6 +60,8 @@ const EXTRA_ROWS = [
   '              # Explicit exceptions, by exact tool name:',
   "              #   nativeTools: ['load_workspace_dependencies']",
   "              #   hiddenTools: ['subagent_codex']",
+  '              nativeTools: []',
+  '              hiddenTools: []',
   '              # Name of this package\'s own transport tool. It cannot be',
   '              # `run_code`: the registry reserves that name for the built-in',
   '              # PTC transport and rejects a registration that shadows it.',
@@ -68,6 +72,18 @@ const EXTRA_ROWS = [
   '                - code_tools_search',
   '                - code_tools_describe',
   '                - code_debug',
+  '              # Search page size and the description truncation used when',
+  '              # the listing is rendered into the prompt.',
+  '              searchLimit: 8',
+  '              maxDescriptionChars: 240',
+  '              # Concurrent sub-calls issued by one program.',
+  '              maxParallelSubCalls: 10',
+  '              # Reject a model-direct call to a masked name, and replace the',
+  '              # executor-provided `tools:sdk` section with the Code Mode one.',
+  '              guard: true',
+  '              sdkSection: true',
+  '              # Keep the recent assembly decisions for `code_debug`.',
+  '              debug: true',
 ];
 
 /**
@@ -211,13 +227,17 @@ const header = [
   `# Generated: ${new Date().toISOString()}`,
   '#',
   "# This bundle layer inserts one row: the `codemode` agent preset. Its plugin list",
-  '# mirrors the composed `preset-standard` row captured above, plus:',
-  '#   - @deepseek-ai/dsh-agent-tool-presentation with mode: native (standard tools',
-  '#     stay natively callable), and',
-  '#   - this package, which supplies the `code_run` program transport, masks every',
-  "#     tool the preset's own composition does not register (MCP servers, profile",
-  '#     bundles, per-agent tool sets) out of the request surface, and registers the',
-  '#     discovery tools a program uses to find and call them.',
+  '# mirrors the shipped `preset-standard` row captured above, plus one row of its',
+  '# own — this package, which supplies the `code_run` program transport, masks',
+  "# every tool the preset's own composition does not register (MCP servers,",
+  '# profile bundles, per-agent tool sets) out of the request surface, and',
+  '# registers the discovery tools a program uses to find and call them.',
+  '#',
+  '# Native tool execution is not restated here: `dsh-base` already mounts the',
+  '# `tool-executor-native` row for every profile. The deprecated',
+  '# `@deepseek-ai/dsh-agent-tool-presentation` row is intentionally absent — DSH',
+  '# 0.2.2 dropped it from the base/web-app dependency graphs, and a row naming an',
+  '# uninstalled package fails the whole preset activation, not just that row.',
   '#',
   '# Re-run `node tools/gen-preset.mjs <path>` after a DSH upgrade to re-sync the',
   '# standard rows; the input must be the shipped standard.patch.yml of that release.',
@@ -242,4 +262,5 @@ const out = [
 await writeFile(OUTPUT, out, 'utf8');
 console.log(`wrote ${OUTPUT}`);
 console.log(`  source: ${SOURCE}`);
-console.log(`  preset plugins: ${block.filter((line) => /^\s*-\s*id:/.test(line) && !/^\s{14,}/.test(line)).length} standard rows + 2 added`);
+const extraCount = EXTRA_ROWS.filter((line) => /^\s{10}-\s*id:/.test(line)).length;
+console.log(`  preset plugins: ${block.filter((line) => /^\s*-\s*id:/.test(line) && !/^\s{14,}/.test(line)).length} standard rows + ${extraCount} added`);

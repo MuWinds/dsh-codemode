@@ -1,6 +1,6 @@
 {
   "name": "dsh-codemode",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Code Mode preset for DeepSeek Harness: tools the preset's own composition does not register (MCP servers, profile-level plugins, per-agent tool sets) are kept out of context, and a plugin-owned code_run transport discovers and calls them.",
   "type": "module",
   "main": "./lib/index.js",
@@ -28,7 +28,10 @@
   },
   "engines": {
     "node": ">=22",
-    "dsh": "^0.2.1-alpha.5"
+    "dsh": "^0.2.2-alpha.3"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-tool-executor-native": "^0.2.2-alpha.3"
   },
   "keywords": [
     "dsh",

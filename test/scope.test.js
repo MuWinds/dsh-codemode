@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeConfig } from '../lib/rules.js';
-import { disabledView, findScopeKey, isForeignAtCall, resolveScopeView } from '../lib/scope.js';
+import { isForeignName, normalizeConfig } from '../lib/rules.js';
+import { disabledView, findScopeKey, isForeignAtCall, resolveCatalogView, resolveScopeView } from '../lib/scope.js';
 
 const options = normalizeConfig();
 
@@ -111,3 +111,43 @@ test('isForeignAtCall answers the guard with the same attribution', () => {
   const throwing = { tools: { get: () => { throw new Error('registry down'); } } };
   assert.equal(isForeignAtCall(throwing, scopeKey, 'mcp_probe', options, agentKey), false);
 });
+
+test('resolveCatalogView treats describe() input as the agent view', () => {
+  const scopeKey = {};
+  const ctx = {
+    tools: {
+      get: (name, scope) => {
+        const global = ['mcp__fake__ping', 'mcp_probe'];
+        const preset = ['pwsh', 'code_run'];
+        if (scope === undefined) return global.includes(name) ? { name } : undefined;
+        if (scope === scopeKey) return global.includes(name) || preset.includes(name) ? { name } : undefined;
+        return undefined;
+      },
+    },
+  };
+  // An executor's describe() receives exactly these, without a scope argument.
+  const input = ['mcp__fake__ping', 'mcp_probe', 'pwsh', 'code_run', 'spawn_teammate'];
+  const view = resolveCatalogView(ctx, scopeKey, input);
+  assert.equal(view.enabled, true);
+  assert.deepEqual([...view.globalNames].sort(), ['mcp__fake__ping', 'mcp_probe']);
+  assert.deepEqual([...view.presetNames].sort(), ['code_run', 'mcp__fake__ping', 'mcp_probe', 'pwsh']);
+  // Everything in the input IS the agent view, including the agent-layer name
+  // that neither the global nor the preset view resolves.
+  assert.deepEqual([...view.agentNames].sort(), [...input].sort());
+
+  // The classification the rules derive from it.
+  assert.equal(isForeignName('mcp__fake__ping', options, view), true);
+  assert.equal(isForeignName('mcp_probe', options, view), true);
+  assert.equal(isForeignName('pwsh', options, view), false);
+  // Registered below the preset: foreign, even though no view above resolves it.
+  assert.equal(isForeignName('spawn_teammate', options, view), true);
+  // A name outside the input is simply not in the agent view.
+  assert.equal(isForeignName('never_seen', options, view), false);
+
+  // Inert configurations mirror resolveScopeView.
+  assert.equal(resolveCatalogView(ctx, undefined, input).enabled, false);
+  assert.equal(resolveCatalogView({ tools: {} }, scopeKey, input).enabled, false);
+  const throwing = { tools: { get: () => { throw new Error('registry down'); } } };
+  assert.equal(resolveCatalogView(throwing, scopeKey, input).enabled, false);
+});
+
